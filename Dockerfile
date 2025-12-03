@@ -1,7 +1,7 @@
 # =========================
 # 1. 构建阶段
 # =========================
-FROM golang:1.23 AS builder   # 改成 1.23 或更高版本
+FROM golang:1.23 AS builder
 
 WORKDIR /app
 
