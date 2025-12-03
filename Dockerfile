@@ -26,5 +26,5 @@ COPY --from=builder /app/usad-wallet-manager .
 # 拷贝 contracts 目录
 COPY --from=builder /app/contracts ./contracts
 
-EXPOSE 8080
+EXPOSE 10832
 CMD ["./usad-wallet-manager"]
