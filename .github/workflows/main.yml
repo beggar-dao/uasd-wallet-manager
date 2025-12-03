@@ -1,0 +1,109 @@
+name: Golang CI/CD with Docker Deployment
+
+on:
+  push:
+    branches: [ "main" ]  # 只在 main 分支推送时触发
+  workflow_dispatch:      # 允许手动触发
+
+env:
+  DOCKER_IMAGE_NAME: com.beggar/wallet  # Docker 镜像名称
+  DOCKER_IMAGE_TAG: 1.0.0               # 镜像标签
+  TAR_FILE: usad-wallet-manager.tar     # 导出的 TAR 文件名
+  BINARY_NAME: usad-wallet-manager      # Go 编译后的二进制文件名
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    steps:
+      # 1. 拉取代码
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      # 2. 设置 Go 环境（Go 1.21）
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.21'
+
+      # 3. 编译 Go 项目
+      - name: Build Go Binary
+        run: |
+          go mod tidy
+          go build -o $BINARY_NAME
+
+      # 4. 构建 Docker 镜像
+      - name: Build Docker Image
+        run: |
+          docker build -t $DOCKER_IMAGE_NAME:$DOCKER_IMAGE_TAG .
+
+      # 5. 导出镜像为 TAR 文件
+      - name: Save Docker image as TAR
+        run: docker save $DOCKER_IMAGE_NAME:$DOCKER_IMAGE_TAG > $TAR_FILE
+
+      # 6.1. 将 PEM 密钥写入文件
+      - name: Create SSH Key File
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/key.pem
+          chmod 600 ~/.ssh/key.pem
+      
+      # 6.2. 通过 SCP 传输文件
+      - name: Upload Files via SCP
+        run: |
+          scp -o StrictHostKeyChecking=no \
+              -i ~/.ssh/key.pem \
+              ./$TAR_FILE \
+              ${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}:/tmp/
+
+      # 6.3. 重启服务
+      - name: Run Remote Commands
+        run: |
+          ssh -o StrictHostKeyChecking=no \
+              -i ~/.ssh/key.pem \
+              ${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }} << EOF
+          cd /data/apps/usad-wallet-manager
+          sudo docker load < /tmp/$TAR_FILE
+          sudo docker compose ps
+          sudo docker compose down
+          sudo docker compose up -d
+          sudo docker image prune -f
+          EOF
+      
+      # 7. 成功后发送 Lark 通知
+      - name: Notify Lark on Success
+        if: success()
+        uses: actions/github-script@v7
+        env:
+          LARK_WEBHOOK: ${{ secrets.LARK_WEBHOOK_URL }}
+        with:
+          script: |
+            const message = {
+              msg_type: "text",
+              content: {
+                text: "✅ 部署成功！\n- 项目: ${{ github.repository }}\n- 分支: ${{ github.ref }}\n- 触发者: ${{ github.actor }}\n- 详情: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+              }
+            };
+            await fetch(process.env.LARK_WEBHOOK, {
+              method: 'POST',
+              body: JSON.stringify(message),
+              headers: { 'Content-Type': 'application/json' }
+            });
+
+      - name: Notify Lark on Failure
+        if: failure()
+        uses: actions/github-script@v7
+        env:
+          LARK_WEBHOOK: ${{ secrets.LARK_WEBHOOK_URL }}
+        with:
+          script: |
+            const message = {
+              msg_type: "text",
+              content: {
+                text: "❌ 部署失败！\n- 项目: ${{ github.repository }}\n- 分支: ${{ github.ref }}\n- 触发者: ${{ github.actor }}\n- 日志: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+              }
+            };
+            await fetch(process.env.LARK_WEBHOOK, {
+              method: 'POST',
+              body: JSON.stringify(message),
+              headers: { 'Content-Type': 'application/json' }
+            });
