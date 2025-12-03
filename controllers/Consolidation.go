@@ -17,9 +17,7 @@ import (
 	"go.uber.org/zap"
 	"math/big"
 	"os"
-	"os/signal"
 	"strconv"
-	"syscall"
 	"uasd-wallet-manager/contracts"
 	"uasd-wallet-manager/log"
 )
@@ -40,18 +38,18 @@ var results []struct {
 	ReturnData []byte
 }
 
-func ConsolidationManagerStart() {
-	log.Infow("consolidation manager start")
-	cron := cron.New(cron.WithSeconds())
-	cron.AddFunc("0 */2 * * * *", ConsolidationManager)
-	cron.Start()
+func ConsolidationManagerStart(ctx context.Context) {
+    log.Infow("consolidation manager start")
+    c := cron.New(cron.WithSeconds())
+    _, _ = c.AddFunc("0 */2 * * * *", ConsolidationManager)
+    c.Start()
+    defer c.Stop()
 
-	sigs := make(chan os.Signal, 1)
-	signal.Notify(sigs, syscall.SIGINT, syscall.SIGTERM)
-	<-sigs
-	cron.Stop()
-
+    // 等待退出信号
+    <-ctx.Done()
+    log.Infow("consolidation manager stop")
 }
+
 func ConsolidationManager() {
 	wallet, err := hdwalletInit()
 	if err != nil {
